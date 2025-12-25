@@ -1,6 +1,7 @@
-// src/pages/Dashboard.jsx
+// src/pages/Dashboard.jsx - VERSION COMPLÈTE AVEC SAUVEGARDE
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import axios from 'axios';
 import '../styles/Dashboard.css';
 
 export default function Dashboard() {
@@ -10,13 +11,13 @@ export default function Dashboard() {
   const [imagePreview, setImagePreview] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    // Récupérer l'utilisateur depuis localStorage
     const userData = localStorage.getItem('user');
     
     if (!userData) {
-      // Si pas connecté, rediriger vers login
       navigate('/login');
       return;
     }
@@ -24,6 +25,24 @@ export default function Dashboard() {
     const parsedUser = JSON.parse(userData);
     setUser(parsedUser);
   }, [navigate]);
+  // Dans Dashboard.jsx, après useEffect
+useEffect(() => {
+  const userData = localStorage.getItem('user');
+  
+  if (!userData) {
+    navigate('/login');
+    return;
+  }
+
+  const parsedUser = JSON.parse(userData);
+  setUser(parsedUser);
+  
+  // ⭐ NOUVEAU : Rediriger admin vers son panneau
+  if (parsedUser.role === 'admin') {
+    navigate('/admin');
+    return;
+  }
+}, [navigate]);
 
   const handleLogout = () => {
     localStorage.removeItem('user');
@@ -33,13 +52,11 @@ export default function Dashboard() {
   const handleImageSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Vérifier que c'est une image
       if (!file.type.startsWith('image/')) {
         alert('❌ Veuillez sélectionner une image valide');
         return;
       }
 
-      // Vérifier la taille (max 10MB)
       if (file.size > 10 * 1024 * 1024) {
         alert('❌ L\'image est trop grande (max 10MB)');
         return;
@@ -47,15 +64,14 @@ export default function Dashboard() {
 
       setSelectedImage(file);
       
-      // Créer un aperçu de l'image
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result);
       };
       reader.readAsDataURL(file);
       
-      // Réinitialiser le résultat
       setResult(null);
+      setError(null);
     }
   };
 
@@ -67,55 +83,111 @@ export default function Dashboard() {
 
     setAnalyzing(true);
     setResult(null);
+    setError(null);
 
-    // Simulation de l'analyse (remplacer par l'API du modèle IA)
-    // En production, vous enverrez l'image à votre backend qui utilisera le modèle
-    setTimeout(() => {
-      // Résultat simulé (à remplacer par la vraie API)
-      const mockResults = [
-        {
-          class: 'Normal',
-          confidence: 92.5,
-          description: 'Aucune anomalie détectée',
-          recommendation: 'Suivi de routine recommandé',
-          color: 'success'
-        },
-        {
-          class: 'Adénocarcinome',
-          confidence: 87.3,
-          description: 'Présence suspectée d\'adénocarcinome pulmonaire',
-          recommendation: 'Consultation oncologique urgente recommandée',
-          color: 'danger'
-        },
-        {
-          class: 'Carcinome épidermoïde',
-          confidence: 84.6,
-          description: 'Présence suspectée de carcinome épidermoïde',
-          recommendation: 'Biopsie recommandée pour confirmation',
-          color: 'warning'
-        },
-        {
-          class: 'Carcinome à grandes cellules',
-          confidence: 79.8,
-          description: 'Présence suspectée de carcinome à grandes cellules',
-          recommendation: 'Examens complémentaires nécessaires',
-          color: 'warning'
-        }
-      ];
+    const formData = new FormData();
+    formData.append('file', selectedImage);
 
-      // Sélectionner un résultat aléatoire pour la démo
-      const randomResult = mockResults[Math.floor(Math.random() * mockResults.length)];
+    try {
+      console.log('🔄 Envoi de l\'image à l\'API IA...');
       
-      setResult(randomResult);
+      // Étape 1 : Analyse par l'IA
+      const response = await axios.post('http://localhost:5000/predict', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      console.log('✅ Réponse IA reçue:', response.data);
+
+      if (response.data.success) {
+        const apiResult = response.data;
+        
+        const transformedResult = {
+          class: apiResult.result,
+          confidence: parseFloat(apiResult.confidence) * 100,
+          description: apiResult.interpretation.message,
+          recommendation: apiResult.interpretation.recommendation,
+          color: apiResult.result === 'Normal' ? 'success' : 'danger',
+          probabilities: apiResult.probabilities,
+          risk_level: apiResult.interpretation.risk_level
+        };
+
+        setResult(transformedResult);
+        console.log('📊 Résultat transformé:', transformedResult);
+
+        // Étape 2 : Sauvegarder dans la base de données
+        await saveDiagnostic(transformedResult);
+
+      } else {
+        throw new Error('Erreur dans la réponse de l\'API IA');
+      }
+
+    } catch (err) {
+      console.error('❌ Erreur lors de l\'analyse:', err);
+      
+      let errorMessage = 'Erreur lors de l\'analyse';
+      
+      if (err.response) {
+        errorMessage = err.response.data.error || 'Erreur du serveur backend';
+      } else if (err.request) {
+        errorMessage = 'Le serveur backend ne répond pas. Vérifiez qu\'il est lancé (python app.py)';
+      } else {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+      alert('❌ ' + errorMessage);
+    } finally {
       setAnalyzing(false);
-    }, 3000); // 3 secondes de simulation
+    }
+  };
+
+  // ⭐ NOUVELLE FONCTION : Sauvegarder le diagnostic
+  const saveDiagnostic = async (diagnosticData) => {
+    setSaving(true);
+    
+    try {
+      console.log('💾 Sauvegarde du diagnostic...');
+      
+      const dataToSave = {
+        patient_id: user.id,
+        medecin_id: user.medecin_id || null,
+        resultat: diagnosticData.class,
+        confiance: diagnosticData.confidence,
+        prob_cancer: diagnosticData.probabilities.cancer,
+        prob_normal: diagnosticData.probabilities.normal,
+        description: diagnosticData.description,
+        recommendation: diagnosticData.recommendation,
+        risk_level: diagnosticData.risk_level,
+        image_path: selectedImage.name
+      };
+
+      const response = await axios.post(
+        'http://localhost/lung-cancer-api/api/diagnostics.php',
+        dataToSave
+      );
+
+      console.log('✅ Diagnostic sauvegardé:', response.data);
+
+      if (response.data.success) {
+        console.log('💾 Sauvegarde réussie ! ID:', response.data.diagnostic_id);
+      } else {
+        console.warn('⚠️ Erreur sauvegarde:', response.data.message);
+      }
+
+    } catch (err) {
+      console.error('❌ Erreur sauvegarde:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleReset = () => {
     setSelectedImage(null);
     setImagePreview(null);
     setResult(null);
-    // Réinitialiser l'input file
+    setError(null);
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
@@ -131,29 +203,64 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-container">
-      {/* Navbar */}
       <nav className="dashboard-navbar">
         <div className="navbar-left">
           <h1 className="navbar-logo">🫁 Cancer Poumon AI</h1>
         </div>
         <div className="navbar-right">
-          <span className="user-name">👤 Dr. {user.nom}</span>
+          <span className="user-name">
+            👤 {user.role === 'medecin' ? 'Dr.' : ''} {user.prenom} {user.nom}
+          </span>
+          <Link to="/historique" className="btn-historique">📊 Historique</Link>
           <Link to="/profile" className="btn-profile">Mon Profil</Link>
           <button onClick={handleLogout} className="btn-logout">Déconnexion</button>
         </div>
       </nav>
 
-      {/* Contenu principal */}
       <div className="dashboard-content">
         <div className="dashboard-header">
           <h2 className="dashboard-title">Analyse de Scan Pulmonaire</h2>
           <p className="dashboard-subtitle">
             Téléchargez une image de scan thoracique pour obtenir un diagnostic IA
           </p>
+          {user.medecin_nom && (
+            <p style={{ fontSize: '14px', color: '#666', marginTop: '10px' }}>
+              👨‍⚕️ Votre médecin : <strong>{user.medecin_nom}</strong> ({user.medecin_specialite})
+            </p>
+          )}
         </div>
 
+        {error && (
+          <div className="error-banner" style={{
+            backgroundColor: '#fee',
+            border: '1px solid #fcc',
+            padding: '15px',
+            borderRadius: '8px',
+            marginBottom: '20px',
+            color: '#c00'
+          }}>
+            <strong>❌ Erreur:</strong> {error}
+          </div>
+        )}
+
+        {saving && (
+          <div style={{
+            backgroundColor: '#e3f2fd',
+            border: '1px solid #90caf9',
+            padding: '15px',
+            borderRadius: '8px',
+            marginBottom: '20px',
+            color: '#1976d2',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+          }}>
+            <div className="spinner-small"></div>
+            <span>💾 Sauvegarde du diagnostic en cours...</span>
+          </div>
+        )}
+
         <div className="analysis-container">
-          {/* Zone d'upload */}
           <div className="upload-section">
             <div className="upload-card">
               <h3 className="section-title">📤 Télécharger un scan</h3>
@@ -180,7 +287,7 @@ export default function Dashboard() {
                   <img src={imagePreview} alt="Scan preview" className="image-preview" />
                   <div className="image-actions">
                     <button onClick={handleReset} className="btn-reset">
-                      🔄 Changer l'image
+                      🔄 Changer l'image 
                     </button>
                     <button
                       onClick={handleAnalyze}
@@ -202,7 +309,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Zone de résultats */}
           {analyzing && (
             <div className="result-section">
               <div className="analyzing-card">
@@ -226,7 +332,7 @@ export default function Dashboard() {
                 <div className="result-header">
                   <h3 className="result-title">📊 Résultat du Diagnostic</h3>
                   <span className={`confidence-badge badge-${result.color}`}>
-                    Confiance: {result.confidence}%
+                    Confiance: {result.confidence.toFixed(2)}%
                   </span>
                 </div>
 
@@ -234,6 +340,36 @@ export default function Dashboard() {
                   <div className="result-main">
                     <h4 className="diagnosis-label">Diagnostic :</h4>
                     <h2 className="diagnosis-value">{result.class}</h2>
+                  </div>
+
+                  <div className="result-probabilities" style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '10px',
+                    marginBottom: '15px'
+                  }}>
+                    <div style={{
+                      backgroundColor: '#ffebee',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      textAlign: 'center'
+                    }}>
+                      <p style={{ fontSize: '12px', color: '#666' }}>Probabilité Cancer</p>
+                      <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#d32f2f' }}>
+                        {(result.probabilities.cancer * 100).toFixed(2)}%
+                      </p>
+                    </div>
+                    <div style={{
+                      backgroundColor: '#e8f5e9',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      textAlign: 'center'
+                    }}>
+                      <p style={{ fontSize: '12px', color: '#666' }}>Probabilité Normal</p>
+                      <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#388e3c' }}>
+                        {(result.probabilities.normal * 100).toFixed(2)}%
+                      </p>
+                    </div>
                   </div>
 
                   <div className="result-details">
@@ -252,17 +388,19 @@ export default function Dashboard() {
                         <p className="detail-text">{result.recommendation}</p>
                       </div>
                     </div>
+
+                    <div className="detail-item">
+                      <span className="detail-icon">⚠️</span>
+                      <div>
+                        <p className="detail-label">Niveau de risque</p>
+                        <p className="detail-text">{result.risk_level}</p>
+                      </div>
+                    </div>
                   </div>
 
                   {result.color === 'danger' && (
                     <div className="alert alert-danger">
                       ⚠️ <strong>Attention :</strong> Ce résultat nécessite une consultation médicale urgente
-                    </div>
-                  )}
-
-                  {result.color === 'warning' && (
-                    <div className="alert alert-warning">
-                      ℹ️ <strong>Information :</strong> Des examens complémentaires sont recommandés
                     </div>
                   )}
 
@@ -277,16 +415,15 @@ export default function Dashboard() {
                   <button onClick={handleReset} className="btn-new-analysis">
                     🔄 Nouvelle Analyse
                   </button>
-                  <button className="btn-export">
-                    📄 Exporter le Rapport
-                  </button>
+                  <Link to="/historique" className="btn-export">
+                    📊 Voir l'Historique
+                  </Link>
                 </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Disclaimer */}
         <div className="disclaimer">
           <p>
             ⚠️ <strong>Avertissement :</strong> Ce système d'intelligence artificielle est un outil d'aide au diagnostic. 

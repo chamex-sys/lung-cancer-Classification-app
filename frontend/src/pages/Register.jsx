@@ -1,10 +1,11 @@
-// src/pages/Register.jsx
-import { useState } from 'react';
+// src/pages/Register.jsx - AJOUT DE LA SÉLECTION DE MÉDECIN
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import '../styles/Register.css';
 
 export default function Register() {
   const navigate = useNavigate();
+  const [medecins, setMedecins] = useState([]); // ⭐ NOUVEAU
   const [formData, setFormData] = useState({
     nom: '',
     prenom: '',
@@ -13,7 +14,8 @@ export default function Register() {
     confirmPassword: '',
     telephone: '',
     specialite: '',
-    role: 'medecin'
+    role: 'patient', // ⭐ CHANGÉ de 'medecin' à 'patient' par défaut
+    medecin_id: '' // ⭐ NOUVEAU
   });
 
   const [errors, setErrors] = useState({});
@@ -28,6 +30,23 @@ export default function Register() {
     'Médecine générale',
     'Autre'
   ];
+
+  // ⭐ NOUVEAU : Charger la liste des médecins
+  useEffect(() => {
+    const fetchMedecins = async () => {
+      try {
+        const response = await fetch('http://localhost/lung-cancer-api/api/medecins.php');
+        const data = await response.json();
+        if (data.success) {
+          setMedecins(data.medecins);
+        }
+      } catch (error) {
+        console.error('Erreur chargement médecins:', error);
+      }
+    };
+
+    fetchMedecins();
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -67,6 +86,11 @@ export default function Register() {
       newErrors.telephone = 'Le téléphone est requis';
     }
 
+    // ⭐ NOUVEAU : Validation médecin pour les patients
+    if (formData.role === 'patient' && !formData.medecin_id) {
+      newErrors.medecin_id = 'Veuillez choisir un médecin';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -93,13 +117,9 @@ export default function Register() {
         body: JSON.stringify(dataToSend)
       });
 
-      console.log('📥 Statut réponse:', response.status);
-
-      // Lire le texte brut d'abord
       const textResponse = await response.text();
       console.log('📄 Réponse brute:', textResponse);
 
-      // Parser en JSON
       let data;
       try {
         data = JSON.parse(textResponse);
@@ -109,7 +129,6 @@ export default function Register() {
         throw new Error('Réponse serveur invalide');
       }
 
-      // Vérifier le succès avec response.ok OU data.success
       if (response.ok && data.success) {
         console.log('🎉 Inscription réussie !');
         setSuccess(true);
@@ -121,21 +140,21 @@ export default function Register() {
           confirmPassword: '',
           telephone: '',
           specialite: '',
-          role: 'medecin'
+          role: 'patient',
+          medecin_id: ''
         });
 
         setTimeout(() => {
           navigate('/login');
         }, 2000);
       } else {
-        // Erreur métier (email déjà utilisé, etc.)
         console.log('⚠️ Erreur métier:', data.message);
         setErrors({ submit: data.message || "Erreur lors de l'inscription" });
       }
     } catch (error) {
       console.error('❌ Erreur réseau:', error);
       setErrors({
-        submit: 'Erreur de connexion au serveur. Vérifiez que XAMPP est démarré (Apache + MySQL)'
+        submit: 'Erreur de connexion au serveur. Vérifiez que XAMPP est démarré'
       });
     } finally {
       setLoading(false);
@@ -174,7 +193,7 @@ export default function Register() {
           <div className="form-section">
             <label className="form-label">Type de compte</label>
             <div className="role-selector">
-              {['medecin', 'admin', 'patient'].map((role) => (
+              {['patient', 'medecin', 'admin'].map((role) => (
                 <button
                   key={role}
                   type="button"
@@ -221,7 +240,7 @@ export default function Register() {
 
           <div className="form-group">
             <label className="form-label">
-              Email professionnel <span className="required">*</span>
+              Email <span className="required">*</span>
             </label>
             <input
               type="email"
@@ -229,7 +248,7 @@ export default function Register() {
               value={formData.email}
               onChange={handleChange}
               className={`form-input ${errors.email ? 'error' : ''}`}
-              placeholder="dr.benali@hopital.ma"
+              placeholder="email@exemple.com"
             />
             {errors.email && <p className="error-text">{errors.email}</p>}
           </div>
@@ -248,6 +267,29 @@ export default function Register() {
             />
             {errors.telephone && <p className="error-text">{errors.telephone}</p>}
           </div>
+
+          {/* ⭐ NOUVEAU : Sélection du médecin pour les patients */}
+          {formData.role === 'patient' && (
+            <div className="form-group">
+              <label className="form-label">
+                Choisir un médecin <span className="required">*</span>
+              </label>
+              <select
+                name="medecin_id"
+                value={formData.medecin_id}
+                onChange={handleChange}
+                className={`form-select ${errors.medecin_id ? 'error' : ''}`}
+              >
+                <option value="">-- Sélectionnez un médecin --</option>
+                {medecins.map(med => (
+                  <option key={med.id} value={med.id}>
+                    Dr. {med.prenom} {med.nom} - {med.specialite}
+                  </option>
+                ))}
+              </select>
+              {errors.medecin_id && <p className="error-text">{errors.medecin_id}</p>}
+            </div>
+          )}
 
           {formData.role === 'medecin' && (
             <div className="form-group">
