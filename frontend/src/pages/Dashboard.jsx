@@ -1,4 +1,4 @@
-// src/pages/Dashboard.jsx - VERSION COMPLÈTE AVEC SAUVEGARDE
+// src/pages/Dashboard.jsx - VERSION CORRIGÉE
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -13,6 +13,11 @@ export default function Dashboard() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  
+  const [patients, setPatients] = useState([]);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [showPatientSelector, setShowPatientSelector] = useState(false);
+  const [loadingPatients, setLoadingPatients] = useState(false);
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
@@ -24,25 +29,43 @@ export default function Dashboard() {
 
     const parsedUser = JSON.parse(userData);
     setUser(parsedUser);
-  }, [navigate]);
-  // Dans Dashboard.jsx, après useEffect
-useEffect(() => {
-  const userData = localStorage.getItem('user');
-  
-  if (!userData) {
-    navigate('/login');
-    return;
-  }
+    
+    if (parsedUser.role === 'admin') {
+      navigate('/admin');
+      return;
+    }
 
-  const parsedUser = JSON.parse(userData);
-  setUser(parsedUser);
-  
-  // ⭐ NOUVEAU : Rediriger admin vers son panneau
-  if (parsedUser.role === 'admin') {
-    navigate('/admin');
-    return;
-  }
-}, [navigate]);
+    // ⭐ CORRIGÉ : Charger les patients directement ici
+    if (parsedUser.role === 'medecin') {
+      loadPatients(parsedUser.id);
+    }
+  }, [navigate]);
+
+  // ⭐ CORRIGÉ : Fonction de chargement des patients
+  const loadPatients = async (medecinId) => {
+    setLoadingPatients(true);
+    try {
+      console.log('🔄 Chargement des patients pour médecin ID:', medecinId);
+      
+      const response = await axios.get(
+        `http://localhost/lung-cancer-api/api/patients.php?medecin_id=${medecinId}`
+      );
+      
+      console.log('📥 Réponse API patients:', response.data);
+      
+      if (response.data.success) {
+        setPatients(response.data.patients);
+        console.log('✅ Patients chargés:', response.data.patients.length);
+      } else {
+        console.error('❌ Erreur API:', response.data.message);
+      }
+    } catch (error) {
+      console.error('❌ Erreur chargement patients:', error);
+      alert('Erreur lors du chargement des patients');
+    } finally {
+      setLoadingPatients(false);
+    }
+  };
 
   const handleLogout = () => {
     localStorage.removeItem('user');
@@ -72,12 +95,21 @@ useEffect(() => {
       
       setResult(null);
       setError(null);
+      
+      if (user?.role === 'medecin') {
+        setShowPatientSelector(true);
+      }
     }
   };
 
   const handleAnalyze = async () => {
     if (!selectedImage) {
       alert('❌ Veuillez d\'abord sélectionner une image');
+      return;
+    }
+
+    if (user.role === 'medecin' && !selectedPatient) {
+      alert('❌ Veuillez sélectionner un patient');
       return;
     }
 
@@ -91,7 +123,6 @@ useEffect(() => {
     try {
       console.log('🔄 Envoi de l\'image à l\'API IA...');
       
-      // Étape 1 : Analyse par l'IA
       const response = await axios.post('http://localhost:5000/predict', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
@@ -114,11 +145,7 @@ useEffect(() => {
         };
 
         setResult(transformedResult);
-        console.log('📊 Résultat transformé:', transformedResult);
-
-        // Étape 2 : Sauvegarder dans la base de données
         await saveDiagnostic(transformedResult);
-
       } else {
         throw new Error('Erreur dans la réponse de l\'API IA');
       }
@@ -143,16 +170,23 @@ useEffect(() => {
     }
   };
 
-  // ⭐ NOUVELLE FONCTION : Sauvegarder le diagnostic
   const saveDiagnostic = async (diagnosticData) => {
     setSaving(true);
     
     try {
       console.log('💾 Sauvegarde du diagnostic...');
       
+      let patientId = user.id;
+      let medecinId = user.medecin_id || null;
+      
+      if (user.role === 'medecin') {
+        patientId = selectedPatient.id;
+        medecinId = user.id;
+      }
+      
       const dataToSave = {
-        patient_id: user.id,
-        medecin_id: user.medecin_id || null,
+        patient_id: patientId,
+        medecin_id: medecinId,
         resultat: diagnosticData.class,
         confiance: diagnosticData.confidence,
         prob_cancer: diagnosticData.probabilities.cancer,
@@ -163,6 +197,8 @@ useEffect(() => {
         image_path: selectedImage.name
       };
 
+      console.log('📤 Données à sauvegarder:', dataToSave);
+
       const response = await axios.post(
         'http://localhost/lung-cancer-api/api/diagnostics.php',
         dataToSave
@@ -172,8 +208,6 @@ useEffect(() => {
 
       if (response.data.success) {
         console.log('💾 Sauvegarde réussie ! ID:', response.data.diagnostic_id);
-      } else {
-        console.warn('⚠️ Erreur sauvegarde:', response.data.message);
       }
 
     } catch (err) {
@@ -183,11 +217,86 @@ useEffect(() => {
     }
   };
 
+  const handleDownloadReport = () => {
+    if (!result) return;
+    
+    const patientName = user.role === 'medecin' 
+      ? `${selectedPatient.prenom} ${selectedPatient.nom}` 
+      : `${user.prenom} ${user.nom}`;
+    
+    const reportContent = `
+═══════════════════════════════════════════════════
+         RAPPORT D'ANALYSE PULMONAIRE - IA
+═══════════════════════════════════════════════════
+
+Patient: ${patientName}
+Date: ${new Date().toLocaleDateString('fr-FR', { 
+  weekday: 'long', 
+  year: 'numeric', 
+  month: 'long', 
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit'
+})}
+${user.medecin_nom ? `Médecin: ${user.medecin_nom}` : ''}
+${user.role === 'medecin' ? `Analysé par: Dr. ${user.prenom} ${user.nom}` : ''}
+
+───────────────────────────────────────────────────
+RÉSULTATS DE L'ANALYSE
+───────────────────────────────────────────────────
+
+Diagnostic: ${result.class}
+Niveau de confiance: ${result.confidence.toFixed(2)}%
+Niveau de risque: ${result.risk_level}
+
+Probabilités détaillées:
+  • Cancer: ${(result.probabilities.cancer * 100).toFixed(2)}%
+  • Normal: ${(result.probabilities.normal * 100).toFixed(2)}%
+
+───────────────────────────────────────────────────
+DESCRIPTION CLINIQUE
+───────────────────────────────────────────────────
+
+${result.description}
+
+───────────────────────────────────────────────────
+RECOMMANDATIONS MÉDICALES
+───────────────────────────────────────────────────
+
+${result.recommendation}
+
+───────────────────────────────────────────────────
+AVERTISSEMENT
+───────────────────────────────────────────────────
+
+Ce rapport est généré automatiquement par un système 
+d'intelligence artificielle. Il ne remplace pas l'avis 
+d'un professionnel de santé qualifié. Toute décision 
+médicale doit être validée par un médecin.
+
+═══════════════════════════════════════════════════
+        Cancer Poumon AI - ${new Date().getFullYear()}
+═══════════════════════════════════════════════════
+    `;
+
+    const blob = new Blob([reportContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Rapport_${patientName.replace(/\s/g, '_')}_${new Date().getTime()}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const handleReset = () => {
     setSelectedImage(null);
     setImagePreview(null);
     setResult(null);
     setError(null);
+    setSelectedPatient(null);
+    setShowPatientSelector(false);
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
@@ -205,52 +314,61 @@ useEffect(() => {
     <div className="dashboard-container">
       <nav className="dashboard-navbar">
         <div className="navbar-left">
-          <h1 className="navbar-logo">🫁 Cancer Poumon AI</h1>
+          <h1 className="navbar-logo">🏥 MediScan Pro</h1>
         </div>
         <div className="navbar-right">
           <span className="user-name">
-            👤 {user.role === 'medecin' ? 'Dr.' : ''} {user.prenom} {user.nom}
+            {user.role === 'medecin' ? '👨‍⚕️ Dr.' : '👤'} {user.prenom} {user.nom}
           </span>
           <Link to="/historique" className="btn-historique">📊 Historique</Link>
-          <Link to="/profile" className="btn-profile">Mon Profil</Link>
+          <Link to="/profile" className="btn-profile-icon" title="Mon Profil">
+            👤
+          </Link>
           <button onClick={handleLogout} className="btn-logout">Déconnexion</button>
         </div>
       </nav>
 
       <div className="dashboard-content">
         <div className="dashboard-header">
-          <h2 className="dashboard-title">Analyse de Scan Pulmonaire</h2>
+          <h2 className="dashboard-title">🔬 Analyse de Scan Pulmonaire</h2>
           <p className="dashboard-subtitle">
-            Téléchargez une image de scan thoracique pour obtenir un diagnostic IA
+            Diagnostic assisté par Intelligence Artificielle
           </p>
-          {user.medecin_nom && (
-            <p style={{ fontSize: '14px', color: '#666', marginTop: '10px' }}>
+          {user.medecin_nom && user.role === 'patient' && (
+            <p style={{ fontSize: '14px', color: '#6b7280', marginTop: '10px' }}>
               👨‍⚕️ Votre médecin : <strong>{user.medecin_nom}</strong> ({user.medecin_specialite})
+            </p>
+          )}
+          {/* ⭐ NOUVEAU : Info pour médecin */}
+          {user.role === 'medecin' && (
+            <p style={{ 
+              fontSize: '14px', 
+              color: '#6b7280', 
+              marginTop: '10px',
+              padding: '10px',
+              background: '#f3f4f6',
+              borderRadius: '8px',
+              display: 'inline-block'
+            }}>
+              👥 Vous avez <strong>{patients.length}</strong> patient{patients.length > 1 ? 's' : ''} assigné{patients.length > 1 ? 's' : ''}
             </p>
           )}
         </div>
 
         {error && (
-          <div className="error-banner" style={{
-            backgroundColor: '#fee',
-            border: '1px solid #fcc',
-            padding: '15px',
-            borderRadius: '8px',
-            marginBottom: '20px',
-            color: '#c00'
-          }}>
+          <div className="error-banner">
             <strong>❌ Erreur:</strong> {error}
           </div>
         )}
 
         {saving && (
           <div style={{
-            backgroundColor: '#e3f2fd',
-            border: '1px solid #90caf9',
+            backgroundColor: '#eff6ff',
+            border: '1px solid #93c5fd',
             padding: '15px',
-            borderRadius: '8px',
+            borderRadius: '12px',
             marginBottom: '20px',
-            color: '#1976d2',
+            color: '#1e40af',
             display: 'flex',
             alignItems: 'center',
             gap: '10px'
@@ -285,13 +403,117 @@ useEffect(() => {
               ) : (
                 <div className="image-preview-container">
                   <img src={imagePreview} alt="Scan preview" className="image-preview" />
+                  
+                  {/* ⭐ Sélecteur de patient pour médecin */}
+                  {user.role === 'medecin' && showPatientSelector && (
+                    <div style={{
+                      marginTop: '20px',
+                      marginBottom: '20px',
+                      padding: '20px',
+                      backgroundColor: '#eff6ff',
+                      borderRadius: '12px',
+                      border: '2px solid #3b82f6'
+                    }}>
+                      <label style={{ 
+                        display: 'block', 
+                        marginBottom: '12px',
+                        fontWeight: 700,
+                        color: '#1e3a8a',
+                        fontSize: '15px'
+                      }}>
+                        👤 Sélectionner le patient concerné :
+                      </label>
+                      
+                      {loadingPatients ? (
+                        <p style={{ color: '#6b7280', textAlign: 'center', padding: '10px' }}>
+                          Chargement des patients...
+                        </p>
+                      ) : patients.length === 0 ? (
+                        <div style={{
+                          padding: '20px',
+                          backgroundColor: '#fef3c7',
+                          borderRadius: '8px',
+                          border: '1px solid #fbbf24',
+                          color: '#92400e',
+                          textAlign: 'center'
+                        }}>
+                          <p style={{ margin: 0, fontWeight: 600 }}>
+                            ⚠️ Aucun patient assigné
+                          </p>
+                          <p style={{ margin: '5px 0 0 0', fontSize: '14px' }}>
+                            Contactez l'administrateur pour assigner des patients
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <select
+                            value={selectedPatient?.id?.toString() || ''}
+                            onChange={(e) => {
+                              const patientId = e.target.value;
+                              if (patientId) {
+                                const patient = patients.find(p => p.id.toString() === patientId);
+                                setSelectedPatient(patient);
+                                console.log('✅ Patient sélectionné:', patient);
+                              } else {
+                                setSelectedPatient(null);
+                              }
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '12px 15px',
+                              border: '2px solid #3b82f6',
+                              borderRadius: '8px',
+                              fontSize: '15px',
+                              backgroundColor: '#ffffff',
+                              cursor: 'pointer',
+                              fontWeight: 500
+                            }}
+                          >
+                            <option value="">-- Choisir un patient --</option>
+                            {patients.map(patient => (
+                              <option key={patient.id} value={patient.id.toString()}>
+                                {patient.prenom} {patient.nom} - {patient.email}
+                              </option>
+                            ))}
+                          </select>
+                          
+                          {selectedPatient && (
+                            <div style={{ 
+                              marginTop: '12px', 
+                              padding: '12px',
+                              backgroundColor: '#d1fae5',
+                              borderRadius: '8px',
+                              border: '1px solid #6ee7b7'
+                            }}>
+                              <p style={{ 
+                                margin: 0,
+                                fontSize: '14px', 
+                                color: '#065f46',
+                                fontWeight: 600
+                              }}>
+                                ✅ Patient sélectionné : {selectedPatient.prenom} {selectedPatient.nom}
+                              </p>
+                              <p style={{ 
+                                margin: '5px 0 0 0',
+                                fontSize: '13px', 
+                                color: '#047857'
+                              }}>
+                                📧 {selectedPatient.email}
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  
                   <div className="image-actions">
                     <button onClick={handleReset} className="btn-reset">
                       🔄 Changer l'image 
                     </button>
                     <button
                       onClick={handleAnalyze}
-                      disabled={analyzing}
+                      disabled={analyzing || (user.role === 'medecin' && !selectedPatient)}
                       className="btn-analyze"
                     >
                       {analyzing ? (
@@ -342,31 +564,22 @@ useEffect(() => {
                     <h2 className="diagnosis-value">{result.class}</h2>
                   </div>
 
-                  <div className="result-probabilities" style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '10px',
-                    marginBottom: '15px'
-                  }}>
+                  <div className="result-probabilities">
                     <div style={{
-                      backgroundColor: '#ffebee',
-                      padding: '10px',
-                      borderRadius: '6px',
-                      textAlign: 'center'
+                      backgroundColor: '#fee2e2',
+                      border: '1px solid #fca5a5'
                     }}>
-                      <p style={{ fontSize: '12px', color: '#666' }}>Probabilité Cancer</p>
-                      <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#d32f2f' }}>
+                      <p style={{ fontSize: '12px', color: '#991b1b', fontWeight: 600 }}>Probabilité Cancer</p>
+                      <p style={{ fontSize: '28px', fontWeight: 800, color: '#dc2626', margin: '5px 0' }}>
                         {(result.probabilities.cancer * 100).toFixed(2)}%
                       </p>
                     </div>
                     <div style={{
-                      backgroundColor: '#e8f5e9',
-                      padding: '10px',
-                      borderRadius: '6px',
-                      textAlign: 'center'
+                      backgroundColor: '#d1fae5',
+                      border: '1px solid #6ee7b7'
                     }}>
-                      <p style={{ fontSize: '12px', color: '#666' }}>Probabilité Normal</p>
-                      <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#388e3c' }}>
+                      <p style={{ fontSize: '12px', color: '#065f46', fontWeight: 600 }}>Probabilité Normal</p>
+                      <p style={{ fontSize: '28px', fontWeight: 800, color: '#059669', margin: '5px 0' }}>
                         {(result.probabilities.normal * 100).toFixed(2)}%
                       </p>
                     </div>
@@ -375,7 +588,7 @@ useEffect(() => {
                   <div className="result-details">
                     <div className="detail-item">
                       <span className="detail-icon">📋</span>
-                      <div>
+                      <div style={{ flex: 1 }}>
                         <p className="detail-label">Description</p>
                         <p className="detail-text">{result.description}</p>
                       </div>
@@ -383,7 +596,7 @@ useEffect(() => {
 
                     <div className="detail-item">
                       <span className="detail-icon">💡</span>
-                      <div>
+                      <div style={{ flex: 1 }}>
                         <p className="detail-label">Recommandation</p>
                         <p className="detail-text">{result.recommendation}</p>
                       </div>
@@ -391,7 +604,7 @@ useEffect(() => {
 
                     <div className="detail-item">
                       <span className="detail-icon">⚠️</span>
-                      <div>
+                      <div style={{ flex: 1 }}>
                         <p className="detail-label">Niveau de risque</p>
                         <p className="detail-text">{result.risk_level}</p>
                       </div>
@@ -415,9 +628,9 @@ useEffect(() => {
                   <button onClick={handleReset} className="btn-new-analysis">
                     🔄 Nouvelle Analyse
                   </button>
-                  <Link to="/historique" className="btn-export">
-                    📊 Voir l'Historique
-                  </Link>
+                  <button onClick={handleDownloadReport} className="btn-export">
+                    📄 Télécharger le Rapport
+                  </button>
                 </div>
               </div>
             </div>

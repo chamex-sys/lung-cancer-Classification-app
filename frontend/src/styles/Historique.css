@@ -676,7 +676,7 @@
   .stats-grid {
     grid-template-columns: 1fr;
   }
-  
+   
   .diagnostic-actions {
     flex-direction: column;
   }
