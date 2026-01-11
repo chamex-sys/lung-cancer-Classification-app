@@ -1,4 +1,4 @@
-.Card{
+/* .Card{
   border: 1px black solid;
   border-radius: 10px;
   box-shadow: 5px 5px 5px rgb(0, 0, 0, 0.1);
@@ -25,4 +25,174 @@ color: rgb(185, 101, 101);
 
 
 
+} */
+
+
+
+/* index.css */
+
+.Card {
+  border: 3px solid transparent;
+  border-radius: 24px;
+  box-shadow: 0 15px 50px rgba(0, 0, 0, 0.15);
+  padding: 35px 30px;
+  margin: 25px;
+  text-align: center;
+  max-width: 300px;
+  display: inline-block;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(249, 250, 251, 0.95) 100%);
+  backdrop-filter: blur(10px);
+  transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
 }
+
+.Card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.Card::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(102, 126, 234, 0.1) 0%, transparent 70%);
+  opacity: 0;
+  transform: rotate(0deg);
+  transition: opacity 0.4s ease, transform 0.8s ease;
+}
+
+.Card:hover {
+  transform: translateY(-15px) scale(1.03);
+  box-shadow: 0 25px 80px rgba(102, 126, 234, 0.3);
+  border-color: rgba(102, 126, 234, 0.5);
+}
+
+.Card:hover::before {
+  opacity: 1;
+}
+
+.Card:hover::after {
+  opacity: 1;
+  transform: rotate(180deg);
+}
+
+.Card-img {
+  border-radius: 50%;
+  margin-bottom: 25px;
+  height: auto;
+  max-width: 65%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  border: 5px solid rgba(102, 126, 234, 0.2);
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  position: relative;
+  z-index: 1;
+}
+
+.Card:hover .Card-img {
+  transform: scale(1.1) rotate(5deg);
+  box-shadow: 0 15px 60px rgba(102, 126, 234, 0.4);
+  border-color: rgba(102, 126, 234, 0.5);
+}
+
+.Card-title {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0 0 15px 0;
+  font-size: 1.8rem;
+  font-weight: 900;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.5px;
+  position: relative;
+  z-index: 1;
+  transition: all 0.3s ease;
+}
+
+.Card:hover .Card-title {
+  transform: scale(1.05);
+  letter-spacing: 0px;
+}
+
+.Card-description {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: #6b7280;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  font-weight: 600;
+  position: relative;
+  z-index: 1;
+  transition: color 0.3s ease;
+}
+
+.Card:hover .Card-description {
+  color: #4b5563;
+}
+
+/* Animation d'apparition */
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.Card {
+  animation: cardFadeIn 0.6s ease-out;
+}
+
+/* Variantes de couleurs pour plusieurs cartes */
+.Card:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.Card:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.Card:nth-child(3) {
+  animation-delay: 0.2s;
+}
+
+.Card:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .Card {
+    max-width: 280px;
+    padding: 30px 25px;
+    margin: 20px;
+  }
+  
+  .Card-title {
+    font-size: 1.5rem;
+  }
+  
+  .Card-description {
+    font-size: 0.95rem;
+  }
+  
+  .Card-img {
+    max-width: 70%;
+  }
+}
+

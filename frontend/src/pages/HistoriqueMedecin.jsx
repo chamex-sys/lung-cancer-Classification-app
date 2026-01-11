@@ -1,22 +1,23 @@
-// src/pages/HistoriqueMedecin.jsx - VERSION COMPLÈTE
+// src/pages/HistoriqueMedecin.jsx - AVEC SYSTÈME DE SIGNATURE
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import '../styles/Historique.css';
+import ReportGenerator from '../components/ReportGenerator';
+import ElectronicSignature from '../components/ElectronicSignature';
 
 export default function HistoriqueMedecin() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
-  const [patients, setPatients] = useState([]);
-  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [diagnostics, setDiagnostics] = useState([]);
+  const [diagnosticsEnAttente, setDiagnosticsEnAttente] = useState([]);
+  const [diagnosticsSignes, setDiagnosticsSignes] = useState([]);
+  const [selectedDiagnostic, setSelectedDiagnostic] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalPatients: 0,
-    totalDiagnostics: 0,
-    diagnosticsCancer: 0,
-    diagnosticsNormal: 0
-  });
+  const [signatureData, setSignatureData] = useState(null);
+  const [showSignatureFor, setShowSignatureFor] = useState(null);
+  const [activeTab, setActiveTab] = useState('en_attente'); // 'en_attente' ou 'signes'
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user') || 'null');
@@ -25,39 +26,24 @@ export default function HistoriqueMedecin() {
       return;
     }
     setUser(userData);
-    loadPatients(userData.id);
+    loadDiagnostics(userData.id);
   }, [navigate]);
 
-  const loadPatients = async (medecinId) => {
+  const loadDiagnostics = async (medecinId) => {
     setLoading(true);
     try {
       const response = await axios.get(
-        `http://localhost/lung-cancer-api/api/patients.php?medecin_id=${medecinId}`
+        `http://localhost/lung-cancer-api/api/diagnostics.php?medecin_id=${medecinId}`
       );
 
       if (response.data.success) {
-        const patientsData = response.data.patients;
-        setPatients(patientsData);
-        
-        // Calculer les statistiques globales
-        const totalDiagnostics = patientsData.reduce((sum, p) => sum + (p.nb_analyses || 0), 0);
-        const diagnosticsCancer = patientsData.reduce((sum, p) => {
-          return sum + (p.diagnostics?.filter(d => d.resultat === 'Cancer').length || 0);
-        }, 0);
-        const diagnosticsNormal = patientsData.reduce((sum, p) => {
-          return sum + (p.diagnostics?.filter(d => d.resultat === 'Normal').length || 0);
-        }, 0);
-
-        setStats({
-          totalPatients: patientsData.length,
-          totalDiagnostics,
-          diagnosticsCancer,
-          diagnosticsNormal
-        });
+        setDiagnostics(response.data.diagnostics);
+        setDiagnosticsEnAttente(response.data.en_attente || []);
+        setDiagnosticsSignes(response.data.signes || []);
       }
     } catch (error) {
-      console.error('Erreur chargement patients:', error);
-      alert('Erreur lors du chargement des patients');
+      console.error('Erreur chargement diagnostics:', error);
+      alert('Erreur lors du chargement des diagnostics');
     } finally {
       setLoading(false);
     }
@@ -68,16 +54,57 @@ export default function HistoriqueMedecin() {
     navigate('/login');
   };
 
-  const filteredPatients = patients.filter(p =>
-    `${p.prenom} ${p.nom}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleSignatureComplete = (signature, diagnosticId) => {
+    setSignatureData(signature);
+    // Sauvegarder la signature dans la BDD
+    saveDiagnosticSignature(diagnosticId, signature);
+  };
+
+  const saveDiagnosticSignature = async (diagnosticId, signature) => {
+    try {
+      const response = await axios.put(
+        'http://localhost/lung-cancer-api/api/diagnostics.php',
+        {
+          id: diagnosticId,
+          signature_medecin: signature
+        }
+      );
+
+      if (response.data.success) {
+        alert('✅ Signature enregistrée avec succès !');
+        setShowSignatureFor(null);
+        // Recharger les diagnostics
+        loadDiagnostics(user.id);
+      } else {
+        alert('❌ Erreur lors de la sauvegarde de la signature');
+      }
+    } catch (error) {
+      console.error('Erreur sauvegarde signature:', error);
+      alert('❌ Erreur lors de la sauvegarde de la signature');
+    }
+  };
+
+  const prepareResultForReport = (diag) => {
+    return {
+      class: diag.resultat,
+      confidence: parseFloat(diag.confiance),
+      description: diag.description,
+      recommendation: diag.recommendation,
+      color: diag.resultat === 'Normal' ? 'success' : 'danger',
+      probabilities: {
+        cancer: diag.resultat === 'Cancer' ? parseFloat(diag.confiance) / 100 : 1 - (parseFloat(diag.confiance) / 100),
+        normal: diag.resultat === 'Normal' ? parseFloat(diag.confiance) / 100 : 1 - (parseFloat(diag.confiance) / 100)
+      },
+      risk_level: diag.resultat === 'Cancer' ? 'Élevé' : 'Faible'
+    };
+  };
 
   if (!user) return <div className="loading">Chargement...</div>;
 
+  const currentDiagnostics = activeTab === 'en_attente' ? diagnosticsEnAttente : diagnosticsSignes;
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f7fa' }}>
-      {/* Navbar */}
       <nav style={{
         backgroundColor: 'white',
         padding: '15px 30px',
@@ -96,7 +123,7 @@ export default function HistoriqueMedecin() {
               🏥 MediCare Diagnostics
             </h1>
             <p style={{ margin: '5px 0 0 0', color: '#7f8c8d', fontSize: '14px' }}>
-              Système de Classification Pulmonaire
+              Système de Gestion des Signatures
             </p>
           </div>
           
@@ -119,16 +146,6 @@ export default function HistoriqueMedecin() {
             }}>
               ← Dashboard
             </Link>
-            <Link to="/profile" style={{
-              padding: '8px 16px',
-              backgroundColor: '#95a5a6',
-              color: 'white',
-              textDecoration: 'none',
-              borderRadius: '5px',
-              fontSize: '14px'
-            }}>
-              👤 Profil
-            </Link>
             <button onClick={handleLogout} style={{
               padding: '8px 16px',
               backgroundColor: '#e74c3c',
@@ -145,17 +162,16 @@ export default function HistoriqueMedecin() {
       </nav>
 
       <div style={{ maxWidth: '1600px', margin: '0 auto', padding: '0 20px' }}>
-        {/* En-tête */}
         <div style={{ marginBottom: '30px' }}>
           <h2 style={{ fontSize: '32px', color: '#2c3e50', marginBottom: '10px' }}>
-            📊 Suivi de Mes Patients
+            📋 Gestion des Signatures
           </h2>
           <p style={{ color: '#7f8c8d', fontSize: '16px' }}>
-            Gérez et suivez l'évolution de tous vos patients
+            Signez les diagnostics de vos patients
           </p>
         </div>
 
-        {/* Statistiques du médecin */}
+        {/* Statistiques */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
@@ -167,34 +183,16 @@ export default function HistoriqueMedecin() {
             padding: '25px',
             borderRadius: '12px',
             boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-            borderTop: '4px solid #3498db'
+            borderTop: '4px solid #f39c12'
           }}>
             <div style={{ fontSize: '14px', color: '#7f8c8d', marginBottom: '5px' }}>
-              Total Patients
+              En Attente de Signature
             </div>
-            <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#2c3e50' }}>
-              {stats.totalPatients}
-            </div>
-            <div style={{ fontSize: '12px', color: '#95a5a6', marginTop: '5px' }}>
-              👥 Patients suivis
-            </div>
-          </div>
-
-          <div style={{
-            backgroundColor: 'white',
-            padding: '25px',
-            borderRadius: '12px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-            borderTop: '4px solid #9b59b6'
-          }}>
-            <div style={{ fontSize: '14px', color: '#7f8c8d', marginBottom: '5px' }}>
-              Total Diagnostics
-            </div>
-            <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#2c3e50' }}>
-              {stats.totalDiagnostics}
+            <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#f39c12' }}>
+              {diagnosticsEnAttente.length}
             </div>
             <div style={{ fontSize: '12px', color: '#95a5a6', marginTop: '5px' }}>
-              📊 Analyses effectuées
+              ⏳ Diagnostics à signer
             </div>
           </div>
 
@@ -206,13 +204,13 @@ export default function HistoriqueMedecin() {
             borderTop: '4px solid #27ae60'
           }}>
             <div style={{ fontSize: '14px', color: '#7f8c8d', marginBottom: '5px' }}>
-              Diagnostics Normal
+              Diagnostics Signés
             </div>
             <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#27ae60' }}>
-              {stats.diagnosticsNormal}
+              {diagnosticsSignes.length}
             </div>
             <div style={{ fontSize: '12px', color: '#95a5a6', marginTop: '5px' }}>
-              ✅ {stats.totalDiagnostics > 0 ? ((stats.diagnosticsNormal / stats.totalDiagnostics) * 100).toFixed(1) : 0}%
+              ✅ Signés et validés
             </div>
           </div>
 
@@ -221,329 +219,268 @@ export default function HistoriqueMedecin() {
             padding: '25px',
             borderRadius: '12px',
             boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-            borderTop: '4px solid #e74c3c'
+            borderTop: '4px solid #3498db'
           }}>
             <div style={{ fontSize: '14px', color: '#7f8c8d', marginBottom: '5px' }}>
-              Détections Cancer
+              Total Diagnostics
             </div>
-            <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#e74c3c' }}>
-              {stats.diagnosticsCancer}
+            <div style={{ fontSize: '36px', fontWeight: 'bold', color: '#2c3e50' }}>
+              {diagnostics.length}
             </div>
             <div style={{ fontSize: '12px', color: '#95a5a6', marginTop: '5px' }}>
-              ⚠️ {stats.totalDiagnostics > 0 ? ((stats.diagnosticsCancer / stats.totalDiagnostics) * 100).toFixed(1) : 0}%
+              📊 Tous vos diagnostics
             </div>
           </div>
         </div>
 
-        {/* Barre de recherche */}
+        {/* Onglets */}
         <div style={{
-          backgroundColor: 'white',
-          padding: '15px 20px',
-          borderRadius: '10px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          marginBottom: '20px'
+          display: 'flex',
+          gap: '10px',
+          marginBottom: '20px',
+          borderBottom: '2px solid #e0e0e0'
         }}>
-          <input
-            type="text"
-            placeholder="🔍 Rechercher un patient par nom ou email..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+          <button
+            onClick={() => setActiveTab('en_attente')}
             style={{
-              width: '100%',
-              padding: '12px',
-              border: '2px solid #e0e0e0',
-              borderRadius: '8px',
+              padding: '15px 30px',
+              backgroundColor: activeTab === 'en_attente' ? '#f39c12' : 'transparent',
+              color: activeTab === 'en_attente' ? 'white' : '#7f8c8d',
+              border: 'none',
+              borderBottom: activeTab === 'en_attente' ? '3px solid #f39c12' : 'none',
+              cursor: 'pointer',
               fontSize: '16px',
-              outline: 'none'
+              fontWeight: 'bold',
+              transition: 'all 0.2s'
             }}
-          />
+          >
+            ⏳ En Attente ({diagnosticsEnAttente.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('signes')}
+            style={{
+              padding: '15px 30px',
+              backgroundColor: activeTab === 'signes' ? '#27ae60' : 'transparent',
+              color: activeTab === 'signes' ? 'white' : '#7f8c8d',
+              border: 'none',
+              borderBottom: activeTab === 'signes' ? '3px solid #27ae60' : 'none',
+              cursor: 'pointer',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              transition: 'all 0.2s'
+            }}
+          >
+            ✅ Signés ({diagnosticsSignes.length})
+          </button>
         </div>
 
-        {/* Layout patients */}
+        {/* Liste des diagnostics */}
         <div style={{
-          display: 'grid',
-          gridTemplateColumns: selectedPatient ? '400px 1fr' : '1fr',
-          gap: '20px',
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          padding: '25px',
           marginBottom: '50px'
         }}>
-          {/* Liste des patients */}
-          <div style={{
-            backgroundColor: 'white',
-            borderRadius: '12px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-            padding: '20px',
-            maxHeight: '800px',
-            overflowY: 'auto'
-          }}>
-            <h3 style={{ marginBottom: '20px', color: '#2c3e50' }}>
-              Patients ({filteredPatients.length})
-            </h3>
-            
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: '50px', color: '#7f8c8d' }}>
-                Chargement...
-              </div>
-            ) : filteredPatients.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '50px', color: '#7f8c8d' }}>
-                Aucun patient trouvé
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {filteredPatients.map(patient => (
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '50px', color: '#7f8c8d' }}>
+              Chargement...
+            </div>
+          ) : currentDiagnostics.length === 0 ? (
+            <div style={{
+              textAlign: 'center',
+              padding: '50px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '8px'
+            }}>
+              <p style={{ fontSize: '18px', color: '#7f8c8d', margin: 0 }}>
+                {activeTab === 'en_attente' 
+                  ? '📭 Aucun diagnostic en attente de signature' 
+                  : '📭 Aucun diagnostic signé'}
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {currentDiagnostics.map((diag) => (
+                <div key={diag.id}>
                   <div
-                    key={patient.id}
-                    onClick={() => setSelectedPatient(patient)}
                     style={{
-                      padding: '15px',
-                      border: selectedPatient?.id === patient.id ? '2px solid #3498db' : '1px solid #e0e0e0',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      backgroundColor: selectedPatient?.id === patient.id ? '#ebf5fb' : 'white',
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
-                      if (selectedPatient?.id !== patient.id) {
-                        e.currentTarget.style.backgroundColor = '#f8f9fa';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (selectedPatient?.id !== patient.id) {
-                        e.currentTarget.style.backgroundColor = 'white';
-                      }
+                      border: `2px solid ${diag.resultat === 'Normal' ? '#27ae60' : '#e74c3c'}`,
+                      borderRadius: '10px',
+                      padding: '20px',
+                      backgroundColor: diag.resultat === 'Normal' ? '#f0fdf4' : '#fef2f2'
                     }}
                   >
+                    {/* En-tête du diagnostic */}
                     <div style={{
                       display: 'flex',
                       justifyContent: 'space-between',
-                      marginBottom: '8px'
+                      alignItems: 'center',
+                      marginBottom: '15px',
+                      paddingBottom: '15px',
+                      borderBottom: '1px solid #ddd'
                     }}>
-                      <h4 style={{ margin: 0, fontSize: '16px', color: '#2c3e50' }}>
-                        {patient.prenom} {patient.nom}
-                      </h4>
-                      <span style={{
-                        padding: '3px 10px',
-                        borderRadius: '12px',
-                        fontSize: '11px',
-                        fontWeight: 'bold',
-                        backgroundColor: patient.statut === 'actif' ? '#d4edda' : '#fff3cd',
-                        color: patient.statut === 'actif' ? '#155724' : '#856404'
-                      }}>
-                        {patient.statut === 'actif' ? '✓ Actif' : '⚠ Suivi'}
-                      </span>
-                    </div>
-                    
-                    <p style={{ margin: '5px 0', fontSize: '13px', color: '#7f8c8d' }}>
-                      {patient.email}
-                    </p>
-                    
-                    <div style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginTop: '10px',
-                      fontSize: '12px',
-                      color: '#95a5a6'
-                    }}>
-                      <span>📊 {patient.nb_analyses} analyses</span>
-                      <span>📅 {new Date(patient.derniere_analyse).toLocaleDateString('fr-FR')}</span>
-                    </div>
-                    
-                    <div style={{
-                      marginTop: '8px',
-                      padding: '5px',
-                      backgroundColor: patient.dernier_diagnostic === 'Normal' ? '#d4edda' : '#f8d7da',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      textAlign: 'center',
-                      fontWeight: 'bold',
-                      color: patient.dernier_diagnostic === 'Normal' ? '#155724' : '#721c24'
-                    }}>
-                      Dernier: {patient.dernier_diagnostic}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Détails du patient */}
-          {selectedPatient && (
-            <div style={{
-              backgroundColor: 'white',
-              borderRadius: '12px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-              padding: '25px',
-              maxHeight: '800px',
-              overflowY: 'auto'
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '20px'
-              }}>
-                <h3 style={{ margin: 0, color: '#2c3e50' }}>
-                  Dossier de {selectedPatient.prenom} {selectedPatient.nom}
-                </h3>
-                <button
-                  onClick={() => setSelectedPatient(null)}
-                  style={{
-                    padding: '6px 12px',
-                    backgroundColor: '#e0e0e0',
-                    border: 'none',
-                    borderRadius: '5px',
-                    cursor: 'pointer',
-                    fontSize: '14px'
-                  }}
-                >
-                  ✕ Fermer
-                </button>
-              </div>
-              
-              {/* Infos patient */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
-                gap: '15px',
-                marginBottom: '25px'
-              }}>
-                <div style={{
-                  padding: '15px',
-                  backgroundColor: '#f8f9fa',
-                  borderRadius: '8px'
-                }}>
-                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', color: '#7f8c8d' }}>
-                    Email
-                  </p>
-                  <p style={{ margin: 0, fontWeight: 'bold', color: '#2c3e50' }}>
-                    {selectedPatient.email}
-                  </p>
-                </div>
-                <div style={{
-                  padding: '15px',
-                  backgroundColor: '#f8f9fa',
-                  borderRadius: '8px'
-                }}>
-                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', color: '#7f8c8d' }}>
-                    Téléphone
-                  </p>
-                  <p style={{ margin: 0, fontWeight: 'bold', color: '#2c3e50' }}>
-                    {selectedPatient.telephone}
-                  </p>
-                </div>
-                <div style={{
-                  padding: '15px',
-                  backgroundColor: '#f8f9fa',
-                  borderRadius: '8px'
-                }}>
-                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', color: '#7f8c8d' }}>
-                    Date d'inscription
-                  </p>
-                  <p style={{ margin: 0, fontWeight: 'bold', color: '#2c3e50' }}>
-                    {new Date(selectedPatient.date_inscription).toLocaleDateString('fr-FR')}
-                  </p>
-                </div>
-                <div style={{
-                  padding: '15px',
-                  backgroundColor: '#f8f9fa',
-                  borderRadius: '8px'
-                }}>
-                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', color: '#7f8c8d' }}>
-                    Nombre d'analyses
-                  </p>
-                  <p style={{ margin: 0, fontWeight: 'bold', color: '#2c3e50' }}>
-                    {selectedPatient.nb_analyses}
-                  </p>
-                </div>
-              </div>
-
-              {/* Historique diagnostics */}
-              <h4 style={{ marginBottom: '15px', color: '#2c3e50' }}>
-                📋 Historique des Diagnostics
-              </h4>
-
-              {selectedPatient.diagnostics && selectedPatient.diagnostics.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  {selectedPatient.diagnostics.map(diag => (
-                    <div
-                      key={diag.id}
-                      style={{
-                        border: `2px solid ${diag.resultat === 'Normal' ? '#27ae60' : '#e74c3c'}`,
-                        borderRadius: '10px',
-                        padding: '15px',
-                        backgroundColor: diag.resultat === 'Normal' ? '#f0fdf4' : '#fef2f2'
-                      }}
-                    >
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        marginBottom: '10px'
-                      }}>
-                        <div>
-                          <p style={{ 
-                            margin: '0 0 5px 0', 
-                            fontSize: '14px', 
-                            color: '#7f8c8d' 
-                          }}>
-                            📅 {new Date(diag.date).toLocaleDateString('fr-FR', {
-                              day: 'numeric',
-                              month: 'long',
-                              year: 'numeric'
-                            })}
-                          </p>
-                          <h5 style={{ 
-                            margin: 0, 
-                            fontSize: '18px',
-                            color: diag.resultat === 'Normal' ? '#27ae60' : '#e74c3c'
-                          }}>
-                            {diag.resultat}
-                          </h5>
-                        </div>
-                        <span style={{
+                      <div>
+                        <h4 style={{ 
+                          margin: '0 0 5px 0', 
+                          fontSize: '18px',
+                          color: diag.resultat === 'Normal' ? '#27ae60' : '#e74c3c'
+                        }}>
+                          {diag.resultat === 'Normal' ? '✅' : '⚠️'} {diag.resultat}
+                        </h4>
+                        <p style={{ margin: 0, color: '#7f8c8d', fontSize: '14px' }}>
+                          👤 Patient: <strong>{diag.patient_nom}</strong> ({diag.patient_email})
+                        </p>
+                        <p style={{ margin: '5px 0 0 0', color: '#7f8c8d', fontSize: '13px' }}>
+                          📅 {new Date(diag.date).toLocaleDateString('fr-FR', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </p>
+                      </div>
+                      
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{
+                          backgroundColor: diag.resultat === 'Normal' ? '#dcfce7' : '#fee2e2',
+                          color: diag.resultat === 'Normal' ? '#166534' : '#991b1b',
                           padding: '8px 16px',
                           borderRadius: '20px',
                           fontSize: '14px',
                           fontWeight: 'bold',
-                          backgroundColor: diag.resultat === 'Normal' ? '#dcfce7' : '#fee2e2',
-                          color: diag.resultat === 'Normal' ? '#166534' : '#991b1b',
-                          height: 'fit-content'
+                          marginBottom: '10px'
                         }}>
                           {diag.confiance}% confiance
-                        </span>
+                        </div>
+                        
+                        {diag.statut_signature === 'signe' && (
+                          <div style={{
+                            backgroundColor: '#d1fae5',
+                            color: '#065f46',
+                            padding: '5px 12px',
+                            borderRadius: '12px',
+                            fontSize: '12px',
+                            fontWeight: 'bold'
+                          }}>
+                            ✅ Signé le {new Date(diag.date_signature).toLocaleDateString('fr-FR')}
+                          </div>
+                        )}
+                        
+                        {diag.statut_signature === 'en_attente' && (
+                          <div style={{
+                            backgroundColor: '#fef3c7',
+                            color: '#92400e',
+                            padding: '5px 12px',
+                            borderRadius: '12px',
+                            fontSize: '12px',
+                            fontWeight: 'bold'
+                          }}>
+                            ⏳ En attente
+                          </div>
+                        )}
                       </div>
-                      
-                      <p style={{ 
-                        margin: '10px 0', 
-                        fontSize: '14px',
-                        color: '#2c3e50' 
-                      }}>
+                    </div>
+
+                    {/* Contenu du diagnostic */}
+                    <div style={{
+                      backgroundColor: 'white',
+                      padding: '15px',
+                      borderRadius: '8px',
+                      marginBottom: '15px'
+                    }}>
+                      <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#666', fontWeight: 'bold' }}>
+                        📋 Description :
+                      </p>
+                      <p style={{ margin: '0 0 15px 0', color: '#2c3e50' }}>
                         {diag.description}
                       </p>
                       
-                      <div style={{
-                        backgroundColor: diag.resultat === 'Normal' ? '#dcfce7' : '#fef3c7',
-                        padding: '10px',
-                        borderRadius: '6px',
-                        borderLeft: `4px solid ${diag.resultat === 'Normal' ? '#27ae60' : '#f59e0b'}`
-                      }}>
-                        <p style={{ 
-                          margin: '0 0 5px 0', 
-                          fontSize: '13px',
-                          fontWeight: 'bold' 
-                        }}>
-                          💡 Recommandation :
-                        </p>
-                        <p style={{ margin: 0, fontSize: '13px' }}>
-                          {diag.recommendation}
-                        </p>
-                      </div>
+                      <p style={{ margin: '0 0 5px 0', fontSize: '14px', color: '#666', fontWeight: 'bold' }}>
+                        💡 Recommandation :
+                      </p>
+                      <p style={{ margin: 0, color: '#2c3e50' }}>
+                        {diag.recommendation}
+                      </p>
                     </div>
-                  ))}
+
+                    {/* Actions */}
+                    <div style={{
+                      display: 'flex',
+                      gap: '10px',
+                      flexWrap: 'wrap'
+                    }}>
+                      {/* Bouton Signer (uniquement si en attente) */}
+                      {diag.statut_signature === 'en_attente' && (
+                        <button
+                          onClick={() => setShowSignatureFor(showSignatureFor === diag.id ? null : diag.id)}
+                          style={{
+                            flex: 1,
+                            padding: '12px',
+                            backgroundColor: '#f39c12',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '14px',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            minWidth: '200px'
+                          }}
+                        >
+                          ✍️ {showSignatureFor === diag.id ? 'Masquer la signature' : 'Signer ce diagnostic'}
+                        </button>
+                      )}
+                      
+                      {/* Bouton Télécharger le rapport */}
+                      <button
+                        onClick={() => setSelectedDiagnostic(selectedDiagnostic?.id === diag.id ? null : diag)}
+                        style={{
+                          flex: 1,
+                          padding: '12px',
+                          backgroundColor: '#3498db',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                          minWidth: '200px'
+                        }}
+                      >
+                        📄 {selectedDiagnostic?.id === diag.id ? 'Masquer les options' : 'Télécharger le rapport'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Zone de signature */}
+                  {showSignatureFor === diag.id && (
+                    <div style={{ marginTop: '15px' }}>
+                      <ElectronicSignature
+                        onSignatureComplete={(sig) => handleSignatureComplete(sig, diag.id)}
+                        doctorName={`Dr. ${user.prenom} ${user.nom}`}
+                      />
+                    </div>
+                  )}
+
+                  {/* Générateur de rapport */}
+                  {selectedDiagnostic?.id === diag.id && (
+                    <div style={{ marginTop: '15px' }}>
+                      <ReportGenerator
+                        result={prepareResultForReport(diag)}
+                        user={user}
+                        selectedPatient={{ prenom: diag.patient_nom.split(' ')[0], nom: diag.patient_nom.split(' ')[1] }}
+                        diagnosticId={diag.id}
+                        signature={diag.signature_medecin}
+                        onReportGenerated={(data) => {
+                          console.log('✅ Rapport généré:', data);
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <p style={{ color: '#7f8c8d', textAlign: 'center', padding: '30px' }}>
-                  Aucun diagnostic enregistré
-                </p>
-              )}
+              ))}
             </div>
           )}
         </div>

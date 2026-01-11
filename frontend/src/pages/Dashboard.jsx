@@ -3,6 +3,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import '../styles/Dashboard.css';
+import ReportGenerator from '../components/ReportGenerator';
+import ElectronicSignature from '../components/ElectronicSignature';
+import ReportEditor from '../components/ReportEditor';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -18,6 +21,11 @@ export default function Dashboard() {
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [showPatientSelector, setShowPatientSelector] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(false);
+
+  const [diagnosticId, setDiagnosticId] = useState(null);
+  const [showReportEditor, setShowReportEditor] = useState(false);
+  const [showSignature, setShowSignature] = useState(false);
+  const [signatureData, setSignatureData] = useState(null);
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
@@ -35,33 +43,48 @@ export default function Dashboard() {
       return;
     }
 
-    // ⭐ CORRIGÉ : Charger les patients directement ici
     if (parsedUser.role === 'medecin') {
       loadPatients(parsedUser.id);
     }
   }, [navigate]);
+  // ✅ AJOUT : Charger le médecin assigné au patient
+useEffect(() => {
+  if (user?.role === 'patient' && user?.id) {
+    loadAssignedDoctor(user.id);
+  }
+}, [user]);
 
-  // ⭐ CORRIGÉ : Fonction de chargement des patients
+const loadAssignedDoctor = async (patientId) => {
+  try {
+    const res = await axios.get(
+      `http://localhost/lung-cancer-api/api/patients.php?id=${patientId}`
+    );
+
+    if (res.data.success && res.data.patient) {
+      setUser(prev => ({
+        ...prev,
+        medecin_id: res.data.patient.medecin_id,
+        medecin_nom: res.data.patient.medecin_nom,
+        medecin_specialite: res.data.patient.medecin_specialite
+      }));
+    }
+  } catch (err) {
+    console.error('❌ Erreur médecin:', err);
+  }
+};
+
   const loadPatients = async (medecinId) => {
     setLoadingPatients(true);
     try {
-      console.log('🔄 Chargement des patients pour médecin ID:', medecinId);
-      
       const response = await axios.get(
         `http://localhost/lung-cancer-api/api/patients.php?medecin_id=${medecinId}`
       );
       
-      console.log('📥 Réponse API patients:', response.data);
-      
       if (response.data.success) {
         setPatients(response.data.patients);
-        console.log('✅ Patients chargés:', response.data.patients.length);
-      } else {
-        console.error('❌ Erreur API:', response.data.message);
       }
     } catch (error) {
       console.error('❌ Erreur chargement patients:', error);
-      alert('Erreur lors du chargement des patients');
     } finally {
       setLoadingPatients(false);
     }
@@ -121,15 +144,11 @@ export default function Dashboard() {
     formData.append('file', selectedImage);
 
     try {
-      console.log('🔄 Envoi de l\'image à l\'API IA...');
-      
       const response = await axios.post('http://localhost:5000/predict', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
       });
-
-      console.log('✅ Réponse IA reçue:', response.data);
 
       if (response.data.success) {
         const apiResult = response.data;
@@ -171,123 +190,79 @@ export default function Dashboard() {
   };
 
   const saveDiagnostic = async (diagnosticData) => {
-    setSaving(true);
+  setSaving(true);
+  
+  try {
+    let patientId = user.id;
+    let medecinId = null;
     
-    try {
-      console.log('💾 Sauvegarde du diagnostic...');
-      
-      let patientId = user.id;
-      let medecinId = user.medecin_id || null;
-      
-      if (user.role === 'medecin') {
-        patientId = selectedPatient.id;
-        medecinId = user.id;
-      }
-      
-      const dataToSave = {
-        patient_id: patientId,
-        medecin_id: medecinId,
-        resultat: diagnosticData.class,
-        confiance: diagnosticData.confidence,
-        prob_cancer: diagnosticData.probabilities.cancer,
-        prob_normal: diagnosticData.probabilities.normal,
-        description: diagnosticData.description,
-        recommendation: diagnosticData.recommendation,
-        risk_level: diagnosticData.risk_level,
-        image_path: selectedImage.name
-      };
-
-      console.log('📤 Données à sauvegarder:', dataToSave);
-
-      const response = await axios.post(
-        'http://localhost/lung-cancer-api/api/diagnostics.php',
-        dataToSave
-      );
-
-      console.log('✅ Diagnostic sauvegardé:', response.data);
-
-      if (response.data.success) {
-        console.log('💾 Sauvegarde réussie ! ID:', response.data.diagnostic_id);
-      }
-
-    } catch (err) {
-      console.error('❌ Erreur sauvegarde:', err);
-    } finally {
-      setSaving(false);
+    if (user.role === 'medecin') {
+      patientId = selectedPatient.id;
+      medecinId = user.id;
+    } else if (user.role === 'patient') {
+      patientId = user.id;
+      medecinId = user.medecin_id;
     }
+    
+    if (!medecinId) {
+      alert('❌ Aucun médecin assigné. Contactez l\'administration.');
+      setSaving(false);
+      return;
+    }
+    
+    const dataToSave = {
+      patient_id: patientId,
+      medecin_id: medecinId,
+      resultat: diagnosticData.class,
+      confiance: diagnosticData.confidence,
+      prob_cancer: diagnosticData.probabilities.cancer,
+      prob_normal: diagnosticData.probabilities.normal,
+      description: diagnosticData.description,
+      recommendation: diagnosticData.recommendation,
+      risk_level: diagnosticData.risk_level,
+      image_path: selectedImage.name
+    };
+
+    console.log('📤 Données envoyées:', dataToSave);
+
+    const response = await axios.post(
+      'http://localhost/lung-cancer-api/api/diagnostics.php',
+      dataToSave
+    );
+
+    console.log('📥 Réponse API:', response.data);
+
+    if (response.data.success) {
+      setDiagnosticId(response.data.diagnostic_id);
+      console.log('✅ Diagnostic sauvegardé avec ID:', response.data.diagnostic_id);
+      console.log('✅ Médecin associé:', medecinId);
+    } else {
+      // ✅ CORRECTION : Gérer le message d'erreur correctement
+      const errorMsg = response.data.message || 'Erreur inconnue';
+      console.error('❌ Erreur API:', errorMsg);
+      alert('❌ Erreur: ' + errorMsg);
+    }
+
+  } catch (err) {
+    console.error('❌ Erreur sauvegarde:', err);
+    alert('❌ Erreur lors de la sauvegarde du diagnostic');
+  } finally {
+    setSaving(false);
+  }
+};
+  const handleSignatureComplete = (signature) => {
+    setSignatureData(signature);
   };
 
-  const handleDownloadReport = () => {
-    if (!result) return;
-    
-    const patientName = user.role === 'medecin' 
-      ? `${selectedPatient.prenom} ${selectedPatient.nom}` 
-      : `${user.prenom} ${user.nom}`;
-    
-    const reportContent = `
-═══════════════════════════════════════════════════
-         RAPPORT D'ANALYSE PULMONAIRE - IA
-═══════════════════════════════════════════════════
-
-Patient: ${patientName}
-Date: ${new Date().toLocaleDateString('fr-FR', { 
-  weekday: 'long', 
-  year: 'numeric', 
-  month: 'long', 
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit'
-})}
-${user.medecin_nom ? `Médecin: ${user.medecin_nom}` : ''}
-${user.role === 'medecin' ? `Analysé par: Dr. ${user.prenom} ${user.nom}` : ''}
-
-───────────────────────────────────────────────────
-RÉSULTATS DE L'ANALYSE
-───────────────────────────────────────────────────
-
-Diagnostic: ${result.class}
-Niveau de confiance: ${result.confidence.toFixed(2)}%
-Niveau de risque: ${result.risk_level}
-
-Probabilités détaillées:
-  • Cancer: ${(result.probabilities.cancer * 100).toFixed(2)}%
-  • Normal: ${(result.probabilities.normal * 100).toFixed(2)}%
-
-───────────────────────────────────────────────────
-DESCRIPTION CLINIQUE
-───────────────────────────────────────────────────
-
-${result.description}
-
-───────────────────────────────────────────────────
-RECOMMANDATIONS MÉDICALES
-───────────────────────────────────────────────────
-
-${result.recommendation}
-
-───────────────────────────────────────────────────
-AVERTISSEMENT
-───────────────────────────────────────────────────
-
-Ce rapport est généré automatiquement par un système 
-d'intelligence artificielle. Il ne remplace pas l'avis 
-d'un professionnel de santé qualifié. Toute décision 
-médicale doit être validée par un médecin.
-
-═══════════════════════════════════════════════════
-        Cancer Poumon AI - ${new Date().getFullYear()}
-═══════════════════════════════════════════════════
-    `;
-
-    const blob = new Blob([reportContent], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Rapport_${patientName.replace(/\s/g, '_')}_${new Date().getTime()}.txt`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  const handleDiagnosticSaved = (updatedDiagnostic) => {
+    setResult({
+      ...result,
+      class: updatedDiagnostic.resultat,
+      confidence: parseFloat(updatedDiagnostic.confiance),
+      description: updatedDiagnostic.description,
+      recommendation: updatedDiagnostic.recommendation
+    });
+    setShowReportEditor(false);
   };
 
   const handleReset = () => {
@@ -297,6 +272,10 @@ médicale doit être validée par un médecin.
     setError(null);
     setSelectedPatient(null);
     setShowPatientSelector(false);
+    setDiagnosticId(null);
+    setShowReportEditor(false);
+    setShowSignature(false);
+    setSignatureData(null);
     const fileInput = document.getElementById('file-input');
     if (fileInput) fileInput.value = '';
   };
@@ -320,10 +299,15 @@ médicale doit être validée par un médecin.
           <span className="user-name">
             {user.role === 'medecin' ? '👨‍⚕️ Dr.' : '👤'} {user.prenom} {user.nom}
           </span>
-          <Link to="/historique" className="btn-historique">📊 Historique</Link>
+          {/* <Link to="/historique" className="btn-historique">📊 Historique</Link> */}
           <Link to="/profile" className="btn-profile-icon" title="Mon Profil">
             👤
           </Link>
+           {user.role === 'medecin' && (
+  <Link to="/signatures" className="btn-signatures">
+    ✍️ Gestion des Signatures
+  </Link>
+)}
           <button onClick={handleLogout} className="btn-logout">Déconnexion</button>
         </div>
       </nav>
@@ -339,7 +323,6 @@ médicale doit être validée par un médecin.
               👨‍⚕️ Votre médecin : <strong>{user.medecin_nom}</strong> ({user.medecin_specialite})
             </p>
           )}
-          {/* ⭐ NOUVEAU : Info pour médecin */}
           {user.role === 'medecin' && (
             <p style={{ 
               fontSize: '14px', 
@@ -404,7 +387,6 @@ médicale doit être validée par un médecin.
                 <div className="image-preview-container">
                   <img src={imagePreview} alt="Scan preview" className="image-preview" />
                   
-                  {/* ⭐ Sélecteur de patient pour médecin */}
                   {user.role === 'medecin' && showPatientSelector && (
                     <div style={{
                       marginTop: '20px',
@@ -440,9 +422,6 @@ médicale doit être validée par un médecin.
                           <p style={{ margin: 0, fontWeight: 600 }}>
                             ⚠️ Aucun patient assigné
                           </p>
-                          <p style={{ margin: '5px 0 0 0', fontSize: '14px' }}>
-                            Contactez l'administrateur pour assigner des patients
-                          </p>
                         </div>
                       ) : (
                         <>
@@ -453,7 +432,6 @@ médicale doit être validée par un médecin.
                               if (patientId) {
                                 const patient = patients.find(p => p.id.toString() === patientId);
                                 setSelectedPatient(patient);
-                                console.log('✅ Patient sélectionné:', patient);
                               } else {
                                 setSelectedPatient(null);
                               }
@@ -492,13 +470,6 @@ médicale doit être validée par un médecin.
                                 fontWeight: 600
                               }}>
                                 ✅ Patient sélectionné : {selectedPatient.prenom} {selectedPatient.nom}
-                              </p>
-                              <p style={{ 
-                                margin: '5px 0 0 0',
-                                fontSize: '13px', 
-                                color: '#047857'
-                              }}>
-                                📧 {selectedPatient.email}
                               </p>
                             </div>
                           )}
@@ -624,12 +595,90 @@ médicale doit être validée par un médecin.
                   )}
                 </div>
 
+                {/* ✅ CORRECTION 1 : Boutons pour médecins AVANT le générateur */}
+                {user.role === 'medecin' && diagnosticId && (
+                  <div style={{
+                    display: 'flex',
+                    gap: '10px',
+                    marginTop: '20px',
+                    padding: '15px',
+                    backgroundColor: '#f8f9fa',
+                    borderRadius: '8px'
+                  }}>
+                    <button
+                      onClick={() => setShowReportEditor(!showReportEditor)}
+                      style={{
+                        flex: 1,
+                        padding: '12px',
+                        backgroundColor: '#f39c12',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ✏️ {showReportEditor ? 'Masquer' : 'Éditer le Rapport'}
+                    </button>
+                    <button
+                      onClick={() => setShowSignature(!showSignature)}
+                      style={{
+                        flex: 1,
+                        padding: '12px',
+                        backgroundColor: signatureData ? '#27ae60' : '#3498db',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {signatureData ? '✅ Signature Ajoutée' : '✍️ Ajouter Signature'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Éditeur de rapport */}
+                {showReportEditor && diagnosticId && (
+                  <ReportEditor
+                    diagnostic={{
+                      id: diagnosticId,
+                      resultat: result.class,
+                      confiance: result.confidence,
+                      description: result.description,
+                      recommendation: result.recommendation
+                    }}
+                    onSaved={handleDiagnosticSaved}
+                    onCancel={() => setShowReportEditor(false)}
+                  />
+                )}
+
+                {/* Signature électronique */}
+                {showSignature && (
+                  <ElectronicSignature
+                    onSignatureComplete={handleSignatureComplete}
+                    doctorName={user.role === 'medecin' ? `Dr. ${user.prenom} ${user.nom}` : ''}
+                  />
+                )}
+
+                {/* ✅ CORRECTION 2 : UN SEUL générateur de rapports */}
+                <ReportGenerator
+                  result={result}
+                  user={user}
+                  selectedPatient={selectedPatient}
+                  diagnosticId={diagnosticId}
+                  signature={signatureData}
+                  onReportGenerated={(data) => {
+                    console.log('✅ Rapport généré:', data);
+                  }}
+                />
+
+                {/* ✅ CORRECTION 3 : Bouton "Nouvelle Analyse" seulement */}
                 <div className="result-actions">
                   <button onClick={handleReset} className="btn-new-analysis">
                     🔄 Nouvelle Analyse
-                  </button>
-                  <button onClick={handleDownloadReport} className="btn-export">
-                    📄 Télécharger le Rapport
                   </button>
                 </div>
               </div>
